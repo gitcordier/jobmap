@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JobMap</title>
+
+  <!-- ── Leaflet core ───────────────────────────────────────────────── -->
+  <link  rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- ── Leaflet MarkerCluster ──────────────────────────────────────── -->
+  <link  rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link  rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+  <style>
+    /* ── Reset & base ──────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --panel-w:     320px;
+      --accent:      #2563eb;
+      --accent-dark: #1d4ed8;
+      --surface:     #ffffff;
+      --bg:          #f1f5f9;
+      --border:      #e2e8f0;
+      --text:        #1e293b;
+      --muted:       #64748b;
+      --radius:      8px;
+      --shadow:      0 4px 24px rgba(0,0,0,.10);
+      --transition:  180ms ease;
+    }
+
+    html, body { height: 100%; font-family: system-ui, sans-serif; color: var(--text); }
+
+    /* ── Layout ────────────────────────────────────────────────────── */
+    #app { display: flex; height: 100vh; overflow: hidden; }
+
+    /* ── Sidebar ───────────────────────────────────────────────────── */
+    #sidebar {
+      width: var(--panel-w);
+      min-width: var(--panel-w);
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      box-shadow: var(--shadow);
+      z-index: 1000;
+    }
+
+    #sidebar-header {
+      padding: 20px 20px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--accent);
+      color: #fff;
+    }
+
+    #sidebar-header h1 { font-size: 1.25rem; font-weight: 700; letter-spacing: -.02em; }
+    #sidebar-header p  { font-size: .78rem; opacity: .85; margin-top: 2px; }
+
+    /* ── Search form ───────────────────────────────────────────────── */
+    #search-form {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      border-bottom: 1px solid var(--border);
+      overflow-y: auto;
+    }
+
+    .field-group label {
+      display: block;
+      font-size: .73rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 4px;
+    }
+
+    .field-group input,
+    .field-group select {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: .875rem;
+      background: var(--bg);
+      color: var(--text);
+      outline: none;
+      transition: border-color var(--transition);
+    }
+
+    .field-group input:focus,
+    .field-group select:focus { border-color: var(--accent); background: #fff; }
+
+    .salary-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    /* ── Buttons ───────────────────────────────────────────────────── */
+    #btn-search {
+      padding: 9px 0;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      font-size: .9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background var(--transition);
+    }
+    #btn-search:hover { background: var(--accent-dark); }
+    #btn-search:disabled { opacity: .55; cursor: not-allowed; }
+
+    /* ── Status bar ────────────────────────────────────────────────── */
+    #status {
+      padding: 10px 16px;
+      font-size: .78rem;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      min-height: 38px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Results list ──────────────────────────────────────────────── */
+    #results {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+
+    .job-card {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background var(--transition);
+    }
+    .job-card:hover { background: var(--bg); }
+
+    .job-card .jc-title {
+      font-size: .85rem;
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .job-card .jc-company { font-size: .78rem; color: var(--muted); margin-top: 2px; }
+    .job-card .jc-meta {
+      display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap;
+    }
+    .tag {
+      font-size: .68rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: #eff6ff;
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    /* ── Map ───────────────────────────────────────────────────────── */
+    #map { flex: 1; }
+
+    /* ── Popup ─────────────────────────────────────────────────────── */
+    .popup-inner { max-width: 280px; }
+    .popup-inner h3 { font-size: .92rem; font-weight: 700; margin-bottom: 6px; }
+    .popup-inner .pop-company { color: var(--muted); font-size: .78rem; margin-bottom: 6px; }
+    .popup-inner .pop-desc { font-size: .78rem; line-height: 1.5; color: #334155; }
+    .popup-inner .pop-salary {
+      margin-top: 8px; font-size: .78rem; color: #16a34a; font-weight: 600;
+    }
+    .popup-inner .pop-link {
+      display: inline-block;
+      margin-top: 10px;
+      padding: 5px 12px;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 5px;
+      font-size: .78rem;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .popup-inner .pop-link:hover { background: var(--accent-dark); }
+
+    /* ── Empty state ───────────────────────────────────────────────── */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      padding: 24px;
+      text-align: center;
+      color: var(--muted);
+      gap: 8px;
+    }
+    .empty-state svg { opacity: .3; }
+    .empty-state p { font-size: .83rem; }
+  </style>
+</head>
+
+<body>
+<div id="app">
+
+  <!-- ── Sidebar ─────────────────────────────────────────────────── -->
+  <aside id="sidebar">
+    <header id="sidebar-header">
+      <h1>JobMap</h1>
+      <p>Live job search on OpenStreetMap</p>
+    </header>
+
+    <!-- Search form -->
+    <div id="search-form">
+
+      <div class="field-group">
+        <label for="f-country">Country</label>
+        <select id="f-country">
+          <option value="gb">🇬🇧 United Kingdom</option>
+          <option value="us">🇺🇸 United States</option>
+          <option value="fr">🇫🇷 France</option>
+          <option value="de">🇩🇪 Germany</option>
+          <option value="au">🇦🇺 Australia</option>
+          <option value="ca">🇨🇦 Canada</option>
+          <option value="nl">🇳🇱 Netherlands</option>
+          <option value="pl">🇵🇱 Poland</option>
+          <option value="br">🇧🇷 Brazil</option>
+          <option value="in">🇮🇳 India</option>
+          <option value="nz">🇳🇿 New Zealand</option>
+          <option value="za">🇿🇦 South Africa</option>
+          <option value="sg">🇸🇬 Singapore</option>
+          <option value="at">🇦🇹 Austria</option>
+          <option value="be">🇧🇪 Belgium</option>
+          <option value="mx">🇲🇽 Mexico</option>
+          <option value="it">🇮🇹 Italy</option>
+          <option value="es">🇪🇸 Spain</option>
+          <option value="ru">🇷🇺 Russia</option>
+          <option value="ch">🇨🇭 Switzerland</option>
+        </select>
+      </div>
+
+      <div class="field-group">
+        <label for="f-what">Job title / keywords</label>
+        <input id="f-what" type="text" placeholder="e.g. software engineer" />
+      </div>
+
+      <div class="field-group">
+        <label for="f-where">Location</label>
+        <input id="f-where" type="text" placeholder="e.g. London" />
+      </div>
+
+      <div class="field-group">
+        <label for="f-distance">Distance (km)</label>
+        <input id="f-distance" type="number" min="1" max="250" placeholder="10" />
+      </div>
+
+      <div class="field-group">
+        <label>Salary range (annual)</label>
+        <div class="salary-row">
+          <input id="f-salary-min" type="number" min="0" placeholder="Min" />
+          <input id="f-salary-max" type="number" min="0" placeholder="Max" />
+        </div>
+      </div>
+
+      <div class="field-group">
+        <label for="f-contract">Contract type</label>
+        <select id="f-contract">
+          <option value="">Any</option>
+          <option value="permanent">Permanent</option>
+          <option value="contract">Contract</option>
+          <option value="part_time">Part-time</option>
+          <option value="full_time">Full-time</option>
+        </select>
+      </div>
+
+      <div class="field-group">
+        <label for="f-sort">Sort by</label>
+        <select id="f-sort">
+          <option value="relevance">Relevance</option>
+          <option value="date">Date</option>
+          <option value="salary">Salary</option>
+        </select>
+      </div>
+
+      <div class="field-group">
+        <label for="f-pages">Max pages (×50 results)</label>
+        <input id="f-pages" type="number" min="1" max="10" placeholder="3" />
+      </div>
+
+      <button id="btn-search">Search &amp; Fetch</button>
+    </div>
+
+    <!-- Status -->
+    <div id="status">Ready — press Search to load jobs.</div>
+
+    <!-- Results -->
+    <div id="results">
+      <div class="empty-state">
+        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24"
+             fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+        </svg>
+        <p>No jobs loaded yet.<br />Configure a search and press <strong>Search &amp; Fetch</strong>.</p>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Map container ───────────────────────────────────────────── -->
+  <div id="map"></div>
+
+</div>
+
+<script>
+/* ================================================================
+   JobMap — front-end application script
+   ================================================================
+   Responsibilities:
+     1. Initialise the Leaflet map with OpenStreetMap tiles.
+     2. Populate search widgets from /api/params on page load.
+     3. On search: POST new params → POST /api/fetch → GET /api/jobs.
+     4. Render job markers using MarkerCluster.
+     5. Render a scrollable job list in the sidebar.
+   ================================================================ */
+
+"use strict";
+
+/* ── Constants ───────────────────────────────────────────────────── */
+const API_PARAMS = "/api/params";
+const API_FETCH  = "/api/fetch";
+const API_JOBS   = "/api/jobs";
+
+const DEFAULT_CENTER = [51.505, -0.09];  // London
+const DEFAULT_ZOOM   = 6;
+
+/* ── Leaflet map initialisation ──────────────────────────────────── */
+
+const map = L.map("map", {
+  center: DEFAULT_CENTER,
+  zoom: DEFAULT_ZOOM,
+  zoomControl: true,
+  preferCanvas: true,   // Canvas renderer — better performance for many markers.
+});
+
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  maxZoom: 19,
+  /* Smooth tiling: keep tiles in the DOM after they scroll out of view. */
+  keepBuffer: 4,
+  updateWhenIdle: false,
+  updateWhenZooming: false,
+}).addTo(map);
+
+/* ── Marker cluster group ────────────────────────────────────────── */
+
+const clusterGroup = L.markerClusterGroup({
+  chunkedLoading: true,        // Async chunk insertion — keeps UI responsive.
+  maxClusterRadius: 60,
+  showCoverageOnHover: false,
+  spiderfyOnMaxZoom: true,
+  animate: true,
+});
+map.addLayer(clusterGroup);
+
+/* ── DOM refs ────────────────────────────────────────────────────── */
+
+const elCountry    = document.getElementById("f-country");
+const elWhat       = document.getElementById("f-what");
+const elWhere      = document.getElementById("f-where");
+const elDistance   = document.getElementById("f-distance");
+const elSalaryMin  = document.getElementById("f-salary-min");
+const elSalaryMax  = document.getElementById("f-salary-max");
+const elContract   = document.getElementById("f-contract");
+const elSort       = document.getElementById("f-sort");
+const elPages      = document.getElementById("f-pages");
+const elBtnSearch  = document.getElementById("btn-search");
+const elStatus     = document.getElementById("status");
+const elResults    = document.getElementById("results");
+
+/* ── Marker icon factory ─────────────────────────────────────────── */
+
+/**
+ * Build a custom Leaflet DivIcon for a job marker.
+ * @param {string} label - Short text shown on the pin (company initial).
+ */
+function makeIcon(label) {
+  return L.divIcon({
+    className: "",
+    html: `<div style="
+      background:#2563eb;color:#fff;border-radius:50% 50% 50% 0;
+      width:30px;height:30px;transform:rotate(-45deg);
+      border:2px solid #1d4ed8;box-shadow:0 2px 6px rgba(0,0,0,.3);
+      display:flex;align-items:center;justify-content:center;">
+        <span style="transform:rotate(45deg);font-size:11px;font-weight:700;">${label}</span>
+      </div>`,
+    iconSize: [30, 30],
+    iconAnchor: [15, 30],
+    popupAnchor: [0, -32],
+  });
+}
+
+/* ── Popup template ──────────────────────────────────────────────── */
+
+/**
+ * Build the inner HTML for a job's Leaflet popup.
+ * @param {Object} p - Feature properties from the GeoJSON payload.
+ */
+function buildPopup(p) {
+  const salaryHtml = (p.salary_min || p.salary_max)
+    ? `<div class="pop-salary">💰 ${
+        [p.salary_min && `£${Math.round(p.salary_min).toLocaleString()}`,
+         p.salary_max && `£${Math.round(p.salary_max).toLocaleString()}`]
+          .filter(Boolean).join(" – ")
+      } / yr</div>`
+    : "";
+
+  const contractHtml = p.contract_type
+    ? `<span class="tag">${p.contract_type}</span>` : "";
+  const categoryHtml = p.category
+    ? `<span class="tag">${p.category}</span>` : "";
+
+  return `
+    <div class="popup-inner">
+      <h3>${escHtml(p.title)}</h3>
+      <div class="pop-company">🏢 ${escHtml(p.company)} · 📍 ${escHtml(p.location)}</div>
+      <div class="jc-meta">${contractHtml}${categoryHtml}</div>
+      <div class="pop-desc">${escHtml(p.description)}${p.description ? "…" : ""}</div>
+      ${salaryHtml}
+      ${p.redirect_url
+        ? `<a class="pop-link" href="${escHtml(p.redirect_url)}" target="_blank"
+             rel="noopener">View listing ↗</a>`
+        : ""}
+    </div>`;
+}
+
+/* ── Sidebar card template ───────────────────────────────────────── */
+
+/**
+ * Build the sidebar card HTML for a single job.
+ * @param {Object} f - GeoJSON Feature object.
+ */
+function buildCard(f) {
+  const p = f.properties;
+  const salaryStr = (p.salary_min || p.salary_max)
+    ? [p.salary_min && `£${Math.round(p.salary_min / 1000)}k`,
+       p.salary_max && `£${Math.round(p.salary_max / 1000)}k`]
+        .filter(Boolean).join("–")
+    : null;
+
+  return `
+    <div class="job-card" data-id="${escHtml(p.id)}">
+      <div class="jc-title">${escHtml(p.title)}</div>
+      <div class="jc-company">${escHtml(p.company)} · ${escHtml(p.location)}</div>
+      <div class="jc-meta">
+        ${p.contract_type ? `<span class="tag">${escHtml(p.contract_type)}</span>` : ""}
+        ${salaryStr        ? `<span class="tag">${salaryStr}</span>` : ""}
+      </div>
+    </div>`;
+}
+
+/* ── Utilities ───────────────────────────────────────────────────── */
+
+/** HTML-escape a string for safe DOM injection. */
+function escHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Display a status message, optionally with a spinner. */
+function setStatus(msg, loading = false) {
+  elStatus.innerHTML = loading
+    ? `<span class="spinner"></span>${escHtml(msg)}`
+    : escHtml(msg);
+}
+
+/** Disable or enable the search button. */
+function setSearchEnabled(enabled) {
+  elBtnSearch.disabled = !enabled;
+  elBtnSearch.textContent = enabled ? "Search & Fetch" : "Fetching…";
+}
+
+/** Read an integer input; return null if blank or invalid. */
+function intOrNull(el) {
+  const v = parseInt(el.value, 10);
+  return isNaN(v) ? null : v;
+}
+
+/* ── Param population ────────────────────────────────────────────── */
+
+/**
+ * Fetch current params from the server and populate the form widgets.
+ */
+async function loadParams() {
+  try {
+    const res = await fetch(API_PARAMS);
+    if (!res.ok) return;
+    const params = await res.json();
+
+    if (params.country)       elCountry.value   = params.country;
+    if (params.what)          elWhat.value      = params.what;
+    if (params.where)         elWhere.value     = params.where;
+    if (params.distance)      elDistance.value  = params.distance;
+    if (params.salary_min)    elSalaryMin.value = params.salary_min;
+    if (params.salary_max)    elSalaryMax.value = params.salary_max;
+    if (params.contract_type) elContract.value  = params.contract_type;
+    if (params.sort_by)       elSort.value      = params.sort_by;
+    if (params.max_pages)     elPages.value     = params.max_pages;
+  } catch (err) {
+    console.warn("Could not load params:", err);
+  }
+}
+
+/* ── Marker & list rendering ─────────────────────────────────────── */
+
+/**
+ * Mapping from job id → Leaflet Marker, used for pan-to-marker on card click.
+ * @type {Map<string, L.Marker>}
+ */
+const markerIndex = new Map();
+
+/**
+ * Clear all markers and render the supplied GeoJSON FeatureCollection.
+ * @param {Object} geojson - RFC 7946 FeatureCollection from /api/jobs.
+ */
+function renderJobs(geojson) {
+  clusterGroup.clearLayers();
+  markerIndex.clear();
+
+  const features = geojson.features || [];
+
+  if (features.length === 0) {
+    elResults.innerHTML = `
+      <div class="empty-state">
+        <p>No geocoded jobs found.<br/>
+           Try broadening your search criteria.</p>
+      </div>`;
+    setStatus("0 jobs — no geocoded results.");
+    return;
+  }
+
+  /* Build markers. */
+  features.forEach(f => {
+    const [lng, lat] = f.geometry.coordinates;
+    const initial = (f.properties.company || "?")[0].toUpperCase();
+    const marker = L.marker([lat, lng], { icon: makeIcon(initial) })
+      .bindPopup(buildPopup(f.properties), { maxWidth: 300 });
+    markerIndex.set(f.properties.id, marker);
+    clusterGroup.addLayer(marker);
+  });
+
+  /* Fit map to markers. */
+  const bounds = clusterGroup.getBounds();
+  if (bounds.isValid()) {
+    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 12 });
+  }
+
+  /* Build sidebar list. */
+  const html = features.map(buildCard).join("");
+  elResults.innerHTML = html;
+
+  /* Card → marker pan-to. */
+  elResults.querySelectorAll(".job-card").forEach(card => {
+    card.addEventListener("click", () => {
+      const id = card.dataset.id;
+      const marker = markerIndex.get(id);
+      if (!marker) return;
+      map.setView(marker.getLatLng(), 14, { animate: true });
+      /* Open popup — if inside a cluster, spiderfy first. */
+      clusterGroup.zoomToShowLayer(marker, () => marker.openPopup());
+    });
+  });
+
+  const geocoded = features.length;
+  setStatus(`${geocoded} job${geocoded !== 1 ? "s" : ""} displayed.`);
+}
+
+/* ── Search action ───────────────────────────────────────────────── */
+
+/**
+ * Collect form values, update params on the server, trigger the
+ * ingestion pipeline, then reload and render the results.
+ */
+async function performSearch() {
+  setSearchEnabled(false);
+
+  /* 1. Build params object from form. */
+  const params = {
+    country:       elCountry.value         || "gb",
+    what:          elWhat.value.trim()     || null,
+    where:         elWhere.value.trim()   || null,
+    distance:      intOrNull(elDistance),
+    salary_min:    intOrNull(elSalaryMin),
+    salary_max:    intOrNull(elSalaryMax),
+    contract_type: elContract.value       || null,
+    sort_by:       elSort.value           || "relevance",
+    max_pages:     intOrNull(elPages)     || 3,
+  };
+
+  /* 2. Persist params. */
+  setStatus("Saving search parameters…", true);
+  try {
+    await fetch(API_PARAMS, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+  } catch (err) {
+    setStatus("⚠ Could not save parameters.");
+    setSearchEnabled(true);
+    return;
+  }
+
+  /* 3. Trigger ingestion pipeline. */
+  setStatus("Fetching jobs from Adzuna & geocoding…", true);
+  try {
+    const res = await fetch(API_FETCH, { method: "POST" });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      setStatus(`⚠ Pipeline error: ${err.error || res.statusText}`);
+      setSearchEnabled(true);
+      return;
+    }
+    const { summary } = await res.json();
+    setStatus(
+      `Pipeline done — fetched ${summary.fetched}, geocoded ${summary.geocoded}.`,
+      true
+    );
+  } catch (err) {
+    setStatus("⚠ Pipeline request failed.");
+    setSearchEnabled(true);
+    return;
+  }
+
+  /* 4. Load and render results. */
+  setStatus("Loading map markers…", true);
+  try {
+    const res  = await fetch(API_JOBS);
+    const data = await res.json();
+    renderJobs(data);
+  } catch (err) {
+    setStatus("⚠ Could not load job data.");
+  }
+
+  setSearchEnabled(true);
+}
+
+/* ── Load existing jobs on startup (without re-fetching) ─────────── */
+
+async function loadExistingJobs() {
+  try {
+    const res = await fetch(API_JOBS);
+    if (!res.ok) return;
+    const data = await res.json();
+    if ((data.features || []).length > 0) {
+      renderJobs(data);
+    }
+  } catch (_) { /* silently ignore — server may not be up yet */ }
+}
+
+/* ── Event bindings ──────────────────────────────────────────────── */
+
+elBtnSearch.addEventListener("click", performSearch);
+
+/* Allow Enter in text fields to trigger search. */
+[elWhat, elWhere, elDistance].forEach(el => {
+  el.addEventListener("keydown", e => {
+    if (e.key === "Enter") performSearch();
+  });
+});
+
+/* ── Initialise ──────────────────────────────────────────────────── */
+
+(async function init() {
+  await loadParams();
+  await loadExistingJobs();
+})();
+</script>
+</body>
+</html>

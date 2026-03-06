@@ -1,0 +1,12 @@
+{
+  "_comment": "Live search parameters — updated by the map UI. Mirror the Adzuna API contract.",
+  "country": "ch",
+  "what": "engineer",
+  "where": "vaud",
+  "distance": 10,
+  "salary_min": null,
+  "salary_max": null,
+  "contract_type": null,
+  "sort_by": "relevance",
+  "max_pages": 3
+}

@@ -1,0 +1,409 @@
+# JobMap — Architecture & Flow Reference
+
+---
+
+## 1. Module Import Graph — all dependencies
+
+Three tiers: project modules, third-party packages, stdlib groups.
+Dashed edge = lazy import inside a function body.
+
+```mermaid
+graph TD
+
+    subgraph SCRIPTS["scripts/"]
+        SERVE["serve.py"]
+        FETCH["fetch_jobs.py"]
+    end
+
+    subgraph SRV["src/server/"]
+        HANDLER["handler.py"]
+        ROUTER["router.py"]
+    end
+
+    subgraph PIPE["src/pipeline/"]
+        INGEST["ingest.py"]
+    end
+
+    subgraph EXP["src/export/"]
+        GEOJSON["geojson.py"]
+    end
+
+    subgraph API["src/api/"]
+        ADZUNA["adzuna.py"]
+    end
+
+    subgraph GEO["src/geo/"]
+        GEOCODER["geocoder.py"]
+    end
+
+    subgraph DB["src/db/"]
+        MODELS["models.py"]
+        SESSION["session.py"]
+    end
+
+    subgraph CFG["config/"]
+        SETTINGS["settings.py"]
+    end
+
+    subgraph TP["Third-party"]
+        REQUESTS["requests + urllib3"]
+        GEOPY["geopy"]
+        SQLALCHEMY["sqlalchemy"]
+        DOTENV["python-dotenv"]
+    end
+
+    subgraph SL["stdlib"]
+        SL_NET["http.server"]
+        SL_THR["threading"]
+        SL_DT["datetime"]
+        SL_IO["pathlib + os"]
+        SL_JSON["json"]
+        SL_CLI["argparse + sys"]
+        SL_TIME["time"]
+        SL_LOG["logging + typing + dataclasses"]
+    end
+
+    %% ── scripts ──────────────────────────────────────────────
+    SERVE --> SETTINGS
+    SERVE --> SESSION
+    SERVE --> HANDLER
+    SERVE --> SL_NET
+    SERVE --> SL_CLI
+    SERVE --> SL_IO
+    SERVE --> SL_LOG
+
+    FETCH --> SETTINGS
+    FETCH --> INGEST
+    FETCH --> SL_CLI
+    FETCH --> SL_JSON
+    FETCH --> SL_IO
+    FETCH --> SL_LOG
+
+    %% ── server ────────────────────────────────────────────────
+    HANDLER --> SETTINGS
+    HANDLER --> GEOJSON
+    HANDLER --> ROUTER
+    HANDLER -.->|lazy in trigger_fetch| INGEST
+    HANDLER --> SL_NET
+    HANDLER --> SL_THR
+    HANDLER --> SL_JSON
+    HANDLER --> SL_IO
+    HANDLER --> SL_LOG
+
+    ROUTER --> SL_LOG
+
+    %% ── pipeline ──────────────────────────────────────────────
+    INGEST --> SETTINGS
+    INGEST --> ADZUNA
+    INGEST --> MODELS
+    INGEST --> SESSION
+    INGEST --> GEOCODER
+    INGEST --> SQLALCHEMY
+    INGEST --> SL_JSON
+    INGEST --> SL_IO
+    INGEST --> SL_LOG
+
+    %% ── export ────────────────────────────────────────────────
+    GEOJSON --> MODELS
+    GEOJSON --> SESSION
+    GEOJSON --> SQLALCHEMY
+    GEOJSON --> SL_LOG
+
+    %% ── api ───────────────────────────────────────────────────
+    ADZUNA --> SETTINGS
+    ADZUNA --> REQUESTS
+    ADZUNA --> SL_LOG
+
+    %% ── geo ───────────────────────────────────────────────────
+    GEOCODER --> SETTINGS
+    GEOCODER --> MODELS
+    GEOCODER --> SESSION
+    GEOCODER --> GEOPY
+    GEOCODER --> SL_TIME
+    GEOCODER --> SL_LOG
+
+    %% ── db ────────────────────────────────────────────────────
+    SESSION --> SETTINGS
+    SESSION --> MODELS
+    SESSION --> SQLALCHEMY
+    SESSION --> SL_LOG
+
+    MODELS --> SQLALCHEMY
+    MODELS --> SL_DT
+    MODELS --> SL_LOG
+
+    %% ── config ────────────────────────────────────────────────
+    SETTINGS --> DOTENV
+    SETTINGS --> SL_IO
+    SETTINGS --> SL_LOG
+
+    %% ── colour coding ─────────────────────────────────────────
+    classDef project  fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
+    classDef thirdpty fill:#fef9c3,stroke:#ca8a04,color:#713f12
+    classDef stdlib   fill:#f1f5f9,stroke:#94a3b8,color:#334155
+
+    class SERVE,FETCH,HANDLER,ROUTER,INGEST,GEOJSON,ADZUNA,GEOCODER,MODELS,SESSION,SETTINGS project
+    class REQUESTS,GEOPY,SQLALCHEMY,DOTENV thirdpty
+    class SL_NET,SL_THR,SL_DT,SL_IO,SL_JSON,SL_CLI,SL_TIME,SL_LOG stdlib
+```
+
+---
+
+## 2. Request / Response Map (all HTTP routes)
+
+```mermaid
+graph LR
+    Browser -->|GET /| HANDLER
+    Browser -->|GET /api/params| HANDLER
+    Browser -->|POST /api/params| HANDLER
+    Browser -->|POST /api/fetch| HANDLER
+    Browser -->|GET /api/jobs| HANDLER
+
+    HANDLER -->|read file| HTML["templates/map.html"]
+    HANDLER -->|read file| PARAMS["config/params.json"]
+    HANDLER -->|write file| PARAMS
+    HANDLER -->|run pipeline| INGEST["ingest.run()"]
+    HANDLER -->|query DB| GEOJSON["jobs_as_geojson()"]
+
+    INGEST -->|HTTP GET| ADZUNA_API["Adzuna REST API"]
+    INGEST -->|HTTP GET| NOMINATIM["Nominatim\n(OpenStreetMap)"]
+    INGEST -->|read/write| DB["data/jobmap.db\nSQLite"]
+
+    GEOJSON -->|read| DB
+    HTML -->|tiles| OSM["OSM Tile CDN\ntile.openstreetmap.org"]
+```
+
+---
+
+## 3. Search and Fetch Timeline (single button press)
+
+Every arrow corresponds to a real function call verified against source.
+
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant UI as Browser
+    participant SRV as JobMapHandler
+    participant RTR as Router
+    participant HDL as RouteHandlers
+    participant FS as ParamsFile
+    participant ING as IngestPipeline
+    participant AZ as AdzunaClient
+    participant AZAPI as AdzunaAPI
+    participant GEO as CachingGeocoder
+    participant NOM as Nominatim
+    participant DB as SQLite
+
+    User->>UI: fills form and presses Search
+
+    rect rgb(219, 234, 254)
+        Note over UI,FS: Step 1 POST api params
+        UI->>SRV: POST api params
+        SRV->>RTR: do POST dispatch
+        RTR->>HDL: update params
+        HDL->>FS: read existing params file
+        HDL->>FS: write merged params file
+        HDL->>SRV: send 200 ok
+        SRV-->>UI: 200 ok
+    end
+
+    rect rgb(220, 252, 231)
+        Note over UI,DB: Step 2 POST api fetch
+        UI->>SRV: POST api fetch
+        SRV->>RTR: do POST dispatch
+        RTR->>HDL: trigger fetch
+        HDL->>HDL: acquire pipeline lock
+        HDL->>ING: call run with params path
+
+        ING->>DB: init db and run migrations
+        ING->>FS: load params from file
+
+        loop paginate pages 1 to max pages
+            ING->>AZ: call search with params
+            AZ->>AZAPI: HTTP GET jobs search page N
+            AZAPI-->>AZ: JSON results
+            AZ->>AZ: deserialise to RawJob list
+            AZ-->>ING: RawJob list or empty stops loop
+        end
+
+        ING->>GEO: geocode unique locations
+
+        loop each unique location
+            GEO->>DB: cache lookup by location key
+            alt cache hit with coordinates
+                DB-->>GEO: return lat lon
+            else cache hit with null
+                DB-->>GEO: return None known failure
+            else cache miss
+                GEO->>NOM: HTTP geocode request
+                Note over GEO: sleep 1 second rate limit
+                NOM-->>GEO: lat lon or None
+                GEO->>DB: write result to cache
+            end
+        end
+
+        GEO-->>ING: location to coordinates map
+
+        ING->>DB: query MAX search run value
+        DB-->>ING: current max N
+        ING->>DB: upsert jobs with search run N plus 1
+        ING->>DB: commit transaction
+        ING-->>HDL: return summary dict
+
+        HDL->>HDL: release pipeline lock
+        HDL->>SRV: send 200 ok with summary
+        SRV-->>UI: 200 ok with summary
+    end
+
+    rect rgb(254, 249, 195)
+        Note over UI,DB: Step 3 GET api jobs
+        UI->>SRV: GET api jobs
+        SRV->>RTR: do GET dispatch
+        RTR->>HDL: get jobs
+        HDL->>DB: query MAX search run
+        DB-->>HDL: latest run N plus 1
+        HDL->>DB: select jobs for latest run with coordinates
+        DB-->>HDL: Job rows
+        HDL->>HDL: convert each job to GeoJSON feature
+        HDL->>SRV: send 200 GeoJSON no cache
+        SRV-->>UI: 200 GeoJSON FeatureCollection
+    end
+
+    UI->>UI: clear existing markers
+    UI->>UI: add new markers to cluster group
+    UI->>UI: fit map bounds
+    UI-->>User: map updated with results
+```
+
+---
+
+## 4. Geocoding Cache Logic
+
+```mermaid
+flowchart TD
+    A["resolve(location)"] --> B["normalise: strip + lowercase"]
+    B --> C{"SELECT geo_cache\nWHERE location = key"}
+    C -->|row found, lat IS NOT NULL| D["return (lat, lon) ✓"]
+    C -->|row found, lat IS NULL| E["return None\n(known failure — skip)"]
+    C -->|no row| F["sleep ≥ 1.1 s"]
+    F --> G["Nominatim HTTP GET"]
+    G -->|result found| H["INSERT geo_cache (lat, lon)"]
+    G -->|no result / timeout| I["INSERT geo_cache (NULL, NULL)"]
+    H --> D
+    I --> E
+```
+
+---
+
+## 5. search_run Isolation Mechanism
+
+```mermaid
+graph LR
+    S1["Search 1\nLondon · Python\nJobs A B C D\nsearch_run = 1"]
+    S2["Search 2\nParis · Data Eng\nJobs E F G\nsearch_run = 2"]
+    S3["Search 3\nBerlin · DevOps\nJobs H I J K\nsearch_run = 3"]
+    GET["GET /api/jobs\nWHERE search_run = MAX\nreturns H I J K only"]
+
+    S1 -->|next search overwrites| S2
+    S2 -->|next search overwrites| S3
+    S3 -->|read latest run| GET
+
+    style S1 fill:#e2e8f0,stroke:#94a3b8
+    style S2 fill:#e2e8f0,stroke:#94a3b8
+    style S3 fill:#dbeafe,stroke:#3b82f6
+    style GET fill:#dcfce7,stroke:#16a34a
+```
+
+---
+
+## 6. Persistence Layer Schema
+
+```mermaid
+erDiagram
+    JOB {
+        string   id              PK
+        string   title
+        string   company
+        string   location_raw
+        float    latitude
+        float    longitude
+        string   description
+        float    salary_min
+        float    salary_max
+        string   contract_type
+        string   category
+        string   redirect_url
+        string   created_at
+        string   fetched_at
+        int      search_run
+    }
+
+    GEO_CACHE {
+        string   location        PK
+        float    latitude
+        float    longitude
+        string   resolved_at
+    }
+
+    JOB }o--o| GEO_CACHE : "location_raw resolves via"
+```
+
+---
+
+## 7. Server Dispatch Chain
+
+```mermaid
+flowchart LR
+    TCP["TCP socket\n:8080"] --> THS["ThreadingHTTPServer\none thread / request"]
+    THS --> DG["do_GET\ndo_POST\ndo_OPTIONS"]
+    DG --> RD["Router.dispatch()\nlookup method+path\nin dict"]
+    RD -->|matched| FN["route handler fn\nupdate_params()\nget_jobs()\ntrigger_fetch() …"]
+    RD -->|no match| E404["_send_error 404"]
+    FN --> JSON["_send_json()\nCache-Control: no-store"]
+    FN --> HTML["_send_html()"]
+```
+
+---
+
+## 8. File Layout vs Responsibility
+
+```
+jobmap/
+│
+├── .env                     ← secrets (never committed)
+├── .env.example             ← template
+├── requirements.txt
+│
+├── config/
+│   ├── settings.py          ← single typed facade over os.environ
+│   └── params.json          ← mutable search state (R/W at runtime)
+│
+├── src/
+│   ├── api/
+│   │   └── adzuna.py        ← HTTP adapter: Adzuna → [RawJob]
+│   │                           retry, pagination, deserialisation
+│   ├── geo/
+│   │   └── geocoder.py      ← location string → (lat, lon)
+│   │                           Nominatim + SQLite cache
+│   ├── db/
+│   │   ├── models.py        ← ORM: Job, GeoCache
+│   │   └── session.py       ← engine, SessionFactory, init_db + migrations
+│   ├── pipeline/
+│   │   └── ingest.py        ← orchestrator: params → fetch → geocode → persist
+│   ├── export/
+│   │   └── geojson.py       ← DB → RFC 7946 GeoJSON (latest run only)
+│   └── server/
+│       ├── router.py        ← decorator route registry
+│       └── handler.py       ← BaseHTTPRequestHandler + all route bodies
+│
+├── templates/
+│   └── map.html             ← self-contained SPA
+│                               Leaflet + MarkerCluster + search widgets
+│                               pure fetch() API calls, no framework
+│
+└── scripts/
+    ├── serve.py             ← CLI: ThreadingHTTPServer entry point
+    ├── fetch_jobs.py        ← CLI: headless pipeline (no server needed)
+    └── debug_params.py      ← diagnostic: POST→GET round-trip diff
+```
